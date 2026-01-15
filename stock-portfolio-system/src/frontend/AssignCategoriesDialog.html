@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 14px; padding: 16px; margin: 0; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; color: #333; }
+    select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+    select:focus { outline: none; border-color: #4285f4; }
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-primary { background: #4285f4; color: white; }
+    .btn-secondary { background: #f1f1f1; color: #333; }
+    .btn-primary:hover { background: #3367d6; }
+    .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+    .loading { text-align: center; padding: 20px; color: #666; }
+    .multi-select { min-height: 150px; }
+    .help-text { font-size: 12px; color: #666; margin-top: 4px; }
+    .current-categories { padding: 10px; background: #f5f5f5; border-radius: 4px; margin-bottom: 16px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <form id="assignForm">
+    <div class="form-group">
+      <label for="stockId">Select Stock *</label>
+      <select id="stockId" name="stockId" required>
+        <option value="">-- Select Stock --</option>
+      </select>
+    </div>
+
+    <div class="current-categories" id="currentCategories" style="display: none;">
+      <strong>Current Categories:</strong> <span id="currentCatList">None</span>
+    </div>
+
+    <div class="form-group">
+      <label for="categoryIds">Assign Categories</label>
+      <select id="categoryIds" name="categoryIds" multiple class="multi-select">
+        <!-- Populated dynamically -->
+      </select>
+      <p class="help-text">Hold Ctrl (Cmd on Mac) to select multiple categories</p>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" onclick="google.script.host.close()">Cancel</button>
+      <button type="submit" class="btn btn-primary">Update Categories</button>
+    </div>
+  </form>
+
+  <div id="loadingIndicator" class="loading" style="display: none;">
+    Updating...
+  </div>
+
+  <script>
+    let allCategories = [];
+
+    document.addEventListener('DOMContentLoaded', function() {
+      // Load stocks
+      google.script.run
+        .withSuccessHandler(populateStocks)
+        .getStocksForDropdown();
+
+      // Load categories
+      google.script.run
+        .withSuccessHandler(function(cats) {
+          allCategories = cats;
+          populateCategories(cats);
+        })
+        .getCategoriesForDropdown();
+    });
+
+    function populateStocks(stocks) {
+      const select = document.getElementById('stockId');
+      stocks.forEach(stock => {
+        const option = document.createElement('option');
+        option.value = stock.id;
+        option.textContent = stock.symbol + ' - ' + stock.name;
+        select.appendChild(option);
+      });
+    }
+
+    function populateCategories(categories) {
+      const select = document.getElementById('categoryIds');
+      categories.forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat.id;
+        option.textContent = cat.name;
+        select.appendChild(option);
+      });
+    }
+
+    // When stock selected, show current categories
+    document.getElementById('stockId').addEventListener('change', function() {
+      const stockId = this.value;
+      if (!stockId) {
+        document.getElementById('currentCategories').style.display = 'none';
+        return;
+      }
+
+      // Get stock details to show current categories
+      google.script.run
+        .withSuccessHandler(function(stocks) {
+          const stock = stocks.find(s => s.id === stockId);
+          if (stock && stock.categoryIds) {
+            const catIds = stock.categoryIds.split(',').map(c => c.trim());
+            const catNames = catIds.map(id => {
+              const cat = allCategories.find(c => c.id === id);
+              return cat ? cat.name : id;
+            }).join(', ');
+
+            document.getElementById('currentCatList').textContent = catNames || 'None';
+            document.getElementById('currentCategories').style.display = 'block';
+
+            // Pre-select current categories
+            const select = document.getElementById('categoryIds');
+            Array.from(select.options).forEach(opt => {
+              opt.selected = catIds.includes(opt.value);
+            });
+          } else {
+            document.getElementById('currentCatList').textContent = 'None';
+            document.getElementById('currentCategories').style.display = 'block';
+          }
+        })
+        .getStocksForDropdown();
+    });
+
+    document.getElementById('assignForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      const formData = {
+        stockId: document.getElementById('stockId').value,
+        categoryIds: Array.from(document.getElementById('categoryIds').selectedOptions)
+          .map(o => o.value)
+      };
+
+      document.getElementById('assignForm').style.display = 'none';
+      document.getElementById('loadingIndicator').style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(handleResult)
+        .withFailureHandler(handleError)
+        .handleAssignCategories(formData);
+    });
+
+    function handleResult(result) {
+      if (result.success) {
+        alert('Categories updated successfully!\n\nAssigned: ' + result.assignedCategories.length + ' categories');
+        google.script.host.close();
+      } else {
+        handleError(result.error);
+      }
+    }
+
+    function handleError(error) {
+      document.getElementById('assignForm').style.display = 'block';
+      document.getElementById('loadingIndicator').style.display = 'none';
+      alert('Error: ' + error);
+    }
+  </script>
+</body>
+</html>

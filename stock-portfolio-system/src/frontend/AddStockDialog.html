@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 14px; padding: 16px; margin: 0; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; color: #333; }
+    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+    input:focus, select:focus { outline: none; border-color: #4285f4; }
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-primary { background: #4285f4; color: white; }
+    .btn-secondary { background: #f1f1f1; color: #333; }
+    .btn-primary:hover { background: #3367d6; }
+    .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+    .error { color: #ea4335; font-size: 12px; margin-top: 4px; }
+    .loading { text-align: center; padding: 20px; color: #666; }
+  </style>
+</head>
+<body>
+  <form id="addStockForm">
+    <div class="form-group">
+      <label for="name">Stock Name *</label>
+      <input type="text" id="name" name="name" required placeholder="e.g., HDFC Bank Ltd">
+    </div>
+
+    <div class="form-group">
+      <label for="symbol">Symbol *</label>
+      <input type="text" id="symbol" name="symbol" required placeholder="e.g., HDFCBANK"
+             style="text-transform: uppercase;">
+    </div>
+
+    <div class="form-group">
+      <label for="screenerUrl">Screener URL *</label>
+      <input type="url" id="screenerUrl" name="screenerUrl" required
+             placeholder="https://www.screener.in/company/HDFCBANK/">
+      <div class="error" id="urlError" style="display: none;">
+        Please enter a valid Screener.in URL
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="sector">Sector</label>
+      <input type="text" id="sector" name="sector" placeholder="e.g., Banking">
+    </div>
+
+    <div class="form-group">
+      <label for="isin">ISIN (Optional)</label>
+      <input type="text" id="isin" name="isin" placeholder="e.g., INE040A01034">
+    </div>
+
+    <div class="form-group">
+      <label for="categoryIds">Categories</label>
+      <select id="categoryIds" name="categoryIds" multiple size="4">
+        <!-- Populated dynamically -->
+      </select>
+      <small style="color: #666;">Hold Ctrl/Cmd to select multiple</small>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" onclick="google.script.host.close()">Cancel</button>
+      <button type="submit" class="btn btn-primary">Add Stock</button>
+    </div>
+  </form>
+
+  <div id="loadingIndicator" class="loading" style="display: none;">
+    Processing...
+  </div>
+
+  <script>
+    // Load categories on open
+    document.addEventListener('DOMContentLoaded', function() {
+      google.script.run
+        .withSuccessHandler(populateCategories)
+        .getCategoriesForDropdown();
+    });
+
+    function populateCategories(categories) {
+      const select = document.getElementById('categoryIds');
+      categories.forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat.id;
+        option.textContent = cat.name;
+        select.appendChild(option);
+      });
+    }
+
+    // Form submission
+    document.getElementById('addStockForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      // Validate URL
+      const url = document.getElementById('screenerUrl').value;
+      if (!url.includes('screener.in/company/')) {
+        document.getElementById('urlError').style.display = 'block';
+        return;
+      }
+      document.getElementById('urlError').style.display = 'none';
+
+      // Get form data
+      const formData = {
+        name: document.getElementById('name').value,
+        symbol: document.getElementById('symbol').value.toUpperCase(),
+        screenerUrl: url,
+        sector: document.getElementById('sector').value,
+        isin: document.getElementById('isin').value,
+        categoryIds: Array.from(document.getElementById('categoryIds').selectedOptions)
+          .map(o => o.value).join(',')
+      };
+
+      // Show loading
+      document.getElementById('addStockForm').style.display = 'none';
+      document.getElementById('loadingIndicator').style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(handleResult)
+        .withFailureHandler(handleError)
+        .handleAddStock(formData);
+    });
+
+    function handleResult(result) {
+      if (result.success) {
+        alert('Stock added successfully: ' + result.symbol);
+        google.script.host.close();
+      } else {
+        handleError(result.error);
+      }
+    }
+
+    function handleError(error) {
+      document.getElementById('addStockForm').style.display = 'block';
+      document.getElementById('loadingIndicator').style.display = 'none';
+      alert('Error: ' + error);
+    }
+  </script>
+</body>
+</html>

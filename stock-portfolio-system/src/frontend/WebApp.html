@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Portfolio Tracker</title>
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Navigation -->
+    <nav class="navbar">
+      <div class="nav-brand">
+        <span class="brand-icon">📈</span>
+        <span class="brand-text">Portfolio Tracker</span>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#" onclick="showSection('dashboard')" class="nav-link active" data-section="dashboard">Dashboard</a></li>
+        <li><a href="#" onclick="showSection('stocks')" class="nav-link" data-section="stocks">Stocks</a></li>
+        <li><a href="#" onclick="showSection('transactions')" class="nav-link" data-section="transactions">Transactions</a></li>
+        <li><a href="#" onclick="showSection('reports')" class="nav-link" data-section="reports">Reports</a></li>
+      </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Dashboard Section -->
+      <section id="dashboard" class="section active">
+        <h1>Portfolio Dashboard</h1>
+
+        <!-- Summary Cards -->
+        <div class="card-grid">
+          <div class="card summary-card">
+            <div class="card-icon">💰</div>
+            <div class="card-content">
+              <h3>Total Value</h3>
+              <p class="card-value" id="totalValue">₹0</p>
+            </div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-icon">📊</div>
+            <div class="card-content">
+              <h3>Total Invested</h3>
+              <p class="card-value" id="totalInvested">₹0</p>
+            </div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-icon profit">📈</div>
+            <div class="card-content">
+              <h3>Unrealized P/L</h3>
+              <p class="card-value" id="unrealizedPL">₹0</p>
+            </div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-icon">🎯</div>
+            <div class="card-content">
+              <h3>Portfolio CAGR</h3>
+              <p class="card-value" id="portfolioCAGR">-</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Category Allocation -->
+        <div class="card">
+          <h2>Category Allocation</h2>
+          <div id="categoryAllocation" class="allocation-container">
+            <p class="loading">Loading...</p>
+          </div>
+        </div>
+
+        <!-- Top Performers -->
+        <div class="card">
+          <h2>Top Performers (1Y)</h2>
+          <div id="topPerformers" class="table-container">
+            <p class="loading">Loading...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stocks Section -->
+      <section id="stocks" class="section">
+        <div class="section-header">
+          <h1>Stock Holdings</h1>
+          <button class="btn btn-primary" onclick="showModal('addStockModal')">+ Add Stock</button>
+        </div>
+
+        <div class="card">
+          <div id="stocksTable" class="table-container">
+            <p class="loading">Loading stocks...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Transactions Section -->
+      <section id="transactions" class="section">
+        <div class="section-header">
+          <h1>Transactions</h1>
+          <div class="btn-group">
+            <button class="btn btn-success" onclick="showModal('buyModal')">+ Buy</button>
+            <button class="btn btn-danger" onclick="showModal('sellModal')">- Sell</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div id="transactionsTable" class="table-container">
+            <p class="loading">Loading transactions...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Reports Section -->
+      <section id="reports" class="section">
+        <div class="section-header">
+          <h1>Performance Reports</h1>
+          <div class="period-selector">
+            <label>Period:</label>
+            <select id="reportPeriod" onchange="loadReports()">
+              <option value="3M">3 Months</option>
+              <option value="6M">6 Months</option>
+              <option value="1Y" selected>1 Year</option>
+              <option value="3Y">3 Years</option>
+              <option value="5Y">5 Years</option>
+              <option value="ALL">All Time</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Stock Performance -->
+        <div class="card">
+          <h2>Stock-wise CAGR</h2>
+          <div id="stockReports" class="table-container">
+            <p class="loading">Loading...</p>
+          </div>
+        </div>
+
+        <!-- Category Performance -->
+        <div class="card">
+          <h2>Category-wise CAGR</h2>
+          <div id="categoryReports" class="table-container">
+            <p class="loading">Loading...</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add Stock Modal -->
+  <div id="addStockModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add New Stock</h2>
+        <button class="close-btn" onclick="hideModal('addStockModal')">&times;</button>
+      </div>
+      <form id="addStockForm" onsubmit="handleAddStock(event)">
+        <div class="form-group">
+          <label for="stockName">Stock Name *</label>
+          <input type="text" id="stockName" name="name" required placeholder="e.g., HDFC Bank">
+        </div>
+        <div class="form-group">
+          <label for="stockSymbol">Symbol *</label>
+          <input type="text" id="stockSymbol" name="symbol" required placeholder="e.g., HDFCBANK">
+        </div>
+        <div class="form-group">
+          <label for="screenerUrl">Screener URL *</label>
+          <input type="url" id="screenerUrl" name="screenerUrl" required
+                 placeholder="https://www.screener.in/company/HDFCBANK/">
+        </div>
+        <div class="form-group">
+          <label for="stockSector">Sector</label>
+          <input type="text" id="stockSector" name="sector" placeholder="e.g., Banking">
+        </div>
+        <div class="form-group">
+          <label for="stockCategories">Categories</label>
+          <select id="stockCategories" name="categoryIds" multiple class="multi-select">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideModal('addStockModal')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Stock</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Buy Modal -->
+  <div id="buyModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Record Buy Transaction</h2>
+        <button class="close-btn" onclick="hideModal('buyModal')">&times;</button>
+      </div>
+      <form id="buyForm" onsubmit="handleBuy(event)">
+        <div class="form-group">
+          <label for="buyStock">Stock *</label>
+          <select id="buyStock" name="stockId" required>
+            <option value="">Select Stock</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="buyDate">Date *</label>
+            <input type="date" id="buyDate" name="date" required>
+          </div>
+          <div class="form-group">
+            <label for="buyQuantity">Quantity *</label>
+            <input type="number" id="buyQuantity" name="quantity" required min="1" step="1">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="buyPrice">Price per Share *</label>
+            <input type="number" id="buyPrice" name="price" required min="0.01" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="buyTotal">Total Value</label>
+            <input type="text" id="buyTotal" readonly class="calculated-field">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="buyBrokerage">Brokerage</label>
+            <input type="number" id="buyBrokerage" name="brokerage" value="0" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="buySTT">STT</label>
+            <input type="number" id="buySTT" name="stt" value="0" min="0" step="0.01">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="buyNotes">Notes</label>
+          <textarea id="buyNotes" name="notes" rows="2" placeholder="Optional notes"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideModal('buyModal')">Cancel</button>
+          <button type="submit" class="btn btn-success">Record Buy</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Sell Modal -->
+  <div id="sellModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Record Sell Transaction</h2>
+        <button class="close-btn" onclick="hideModal('sellModal')">&times;</button>
+      </div>
+      <form id="sellForm" onsubmit="handleSell(event)">
+        <div class="form-group">
+          <label for="sellStock">Stock *</label>
+          <select id="sellStock" name="stockId" required onchange="updateAvailableQty()">
+            <option value="">Select Stock</option>
+          </select>
+        </div>
+        <div class="available-qty-info">
+          Available: <span id="availableQty">-</span> shares
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="sellDate">Date *</label>
+            <input type="date" id="sellDate" name="date" required>
+          </div>
+          <div class="form-group">
+            <label for="sellQuantity">Quantity *</label>
+            <input type="number" id="sellQuantity" name="quantity" required min="1" step="1">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="sellPrice">Price per Share *</label>
+            <input type="number" id="sellPrice" name="price" required min="0.01" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="sellTotal">Total Value</label>
+            <input type="text" id="sellTotal" readonly class="calculated-field">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="sellBrokerage">Brokerage</label>
+            <input type="number" id="sellBrokerage" name="brokerage" value="0" min="0" step="0.01">
+          </div>
+          <div class="form-group">
+            <label for="sellSTT">STT</label>
+            <input type="number" id="sellSTT" name="stt" value="0" min="0" step="0.01">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="sellNotes">Notes</label>
+          <textarea id="sellNotes" name="notes" rows="2" placeholder="Optional notes"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="hideModal('sellModal')">Cancel</button>
+          <button type="submit" class="btn btn-danger">Record Sell</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast"></div>
+
+  <?!= include('Scripts'); ?>
+</body>
+</html>

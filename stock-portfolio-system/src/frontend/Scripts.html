@@ -1,0 +1,605 @@
+<script>
+// ============================================================================
+// State Management
+// ============================================================================
+let stocks = [];
+let categories = [];
+let currentSection = 'dashboard';
+
+// ============================================================================
+// Initialization
+// ============================================================================
+document.addEventListener('DOMContentLoaded', function() {
+  initializeDateInputs();
+  loadInitialData();
+  setupCalculations();
+});
+
+function initializeDateInputs() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('buyDate').value = today;
+  document.getElementById('sellDate').value = today;
+  document.getElementById('buyDate').max = today;
+  document.getElementById('sellDate').max = today;
+}
+
+function loadInitialData() {
+  // Load stocks and categories
+  google.script.run
+    .withSuccessHandler(function(data) {
+      stocks = data;
+      populateStockDropdowns();
+      renderStocksTable();
+      loadDashboard();
+    })
+    .withFailureHandler(showError)
+    .getStocksForDropdown();
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      categories = data;
+      populateCategoryDropdowns();
+    })
+    .withFailureHandler(showError)
+    .getCategoriesForDropdown();
+}
+
+// ============================================================================
+// Navigation
+// ============================================================================
+function showSection(sectionId) {
+  // Hide all sections
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+
+  // Show selected section
+  document.getElementById(sectionId).classList.add('active');
+
+  // Update nav links
+  document.querySelectorAll('.nav-link').forEach(link => {
+    link.classList.toggle('active', link.dataset.section === sectionId);
+  });
+
+  currentSection = sectionId;
+
+  // Load section-specific data
+  if (sectionId === 'dashboard') {
+    loadDashboard();
+  } else if (sectionId === 'reports') {
+    loadReports();
+  } else if (sectionId === 'transactions') {
+    loadTransactions();
+  }
+}
+
+// ============================================================================
+// Dashboard
+// ============================================================================
+function loadDashboard() {
+  google.script.run
+    .withSuccessHandler(renderDashboard)
+    .withFailureHandler(showError)
+    .getReportData_({ period: '1Y' });
+}
+
+function renderDashboard(data) {
+  if (!data.success) {
+    showError(data.error);
+    return;
+  }
+
+  // Summary values
+  const allocation = data.allocation;
+  document.getElementById('totalValue').textContent = formatCurrency(allocation.totalValue);
+
+  let totalInvested = 0;
+  data.stocks.forEach(s => totalInvested += (s.totalInvested || 0));
+  document.getElementById('totalInvested').textContent = formatCurrency(totalInvested);
+
+  const unrealizedPL = allocation.totalValue - totalInvested;
+  const plElement = document.getElementById('unrealizedPL');
+  plElement.textContent = formatCurrency(unrealizedPL);
+  plElement.className = 'card-value ' + (unrealizedPL >= 0 ? 'profit' : 'loss');
+
+  const portfolioCAGR = data.portfolio.xirr;
+  document.getElementById('portfolioCAGR').textContent =
+    portfolioCAGR !== null ? (portfolioCAGR * 100).toFixed(2) + '%' : 'N/A';
+
+  // Category allocation
+  renderCategoryAllocation(allocation.allocations);
+
+  // Top performers
+  renderTopPerformers(data.stocks);
+}
+
+function renderCategoryAllocation(allocations) {
+  const container = document.getElementById('categoryAllocation');
+
+  if (!allocations || allocations.length === 0) {
+    container.innerHTML = '<p>No category data available</p>';
+    return;
+  }
+
+  let html = '';
+  const maxPercentage = Math.max(...allocations.map(a => a.percentage));
+
+  allocations.forEach(cat => {
+    const barWidth = maxPercentage > 0 ? (cat.percentage / maxPercentage * 100) : 0;
+    html += `
+      <div class="allocation-item">
+        <h4>${cat.categoryName}</h4>
+        <div class="allocation-bar">
+          <div class="allocation-fill" style="width: ${barWidth}%"></div>
+        </div>
+        <div class="allocation-value">
+          <span>${formatCurrency(cat.currentValue)}</span>
+          <span>${cat.percentage.toFixed(1)}%</span>
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function renderTopPerformers(stocksData) {
+  const container = document.getElementById('topPerformers');
+
+  // Sort by CAGR and take top 5
+  const sorted = stocksData
+    .filter(s => s.cagr && s.cagr.xirr !== null)
+    .sort((a, b) => (b.cagr.xirr || 0) - (a.cagr.xirr || 0))
+    .slice(0, 5);
+
+  if (sorted.length === 0) {
+    container.innerHTML = '<p>No performance data available</p>';
+    return;
+  }
+
+  let html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Stock</th>
+          <th class="text-right">Current Price</th>
+          <th class="text-right">1Y CAGR</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  sorted.forEach(stock => {
+    const cagr = stock.cagr.xirr * 100;
+    const cagrClass = cagr >= 0 ? 'profit' : 'loss';
+
+    html += `
+      <tr>
+        <td><strong>${stock.symbol}</strong><br><small>${stock.name}</small></td>
+        <td class="text-right">${formatCurrency(stock.currentPrice)}</td>
+        <td class="text-right ${cagrClass}">${cagr.toFixed(2)}%</td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ============================================================================
+// Stocks Table
+// ============================================================================
+function renderStocksTable() {
+  const container = document.getElementById('stocksTable');
+
+  if (stocks.length === 0) {
+    container.innerHTML = '<p>No stocks found. Add your first stock!</p>';
+    return;
+  }
+
+  let html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Stock</th>
+          <th class="text-right">Current Price</th>
+          <th class="text-right">Quantity</th>
+          <th class="text-right">Avg Buy</th>
+          <th class="text-right">Current Value</th>
+          <th class="text-right">P/L</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  stocks.forEach(stock => {
+    const currentValue = (stock.currentPrice || 0) * (stock.totalQuantity || 0);
+    const invested = (stock.avgBuyPrice || 0) * (stock.totalQuantity || 0);
+    const pl = currentValue - invested;
+    const plPercent = invested > 0 ? (pl / invested * 100) : 0;
+    const plClass = pl >= 0 ? 'profit' : 'loss';
+
+    html += `
+      <tr>
+        <td><strong>${stock.symbol}</strong><br><small>${stock.name}</small></td>
+        <td class="text-right">${formatCurrency(stock.currentPrice || 0)}</td>
+        <td class="text-right">${stock.totalQuantity || 0}</td>
+        <td class="text-right">${formatCurrency(stock.avgBuyPrice || 0)}</td>
+        <td class="text-right">${formatCurrency(currentValue)}</td>
+        <td class="text-right ${plClass}">
+          ${formatCurrency(pl)}<br><small>(${plPercent.toFixed(2)}%)</small>
+        </td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ============================================================================
+// Reports
+// ============================================================================
+function loadReports() {
+  const period = document.getElementById('reportPeriod').value;
+
+  google.script.run
+    .withSuccessHandler(renderReports)
+    .withFailureHandler(showError)
+    .getReportData_({ period: period });
+}
+
+function renderReports(data) {
+  if (!data.success) {
+    showError(data.error);
+    return;
+  }
+
+  // Stock reports
+  const stockContainer = document.getElementById('stockReports');
+  if (data.stocks && data.stocks.length > 0) {
+    let html = `
+      <table>
+        <thead>
+          <tr>
+            <th>Stock</th>
+            <th class="text-right">Invested</th>
+            <th class="text-right">Current Value</th>
+            <th class="text-right">CAGR</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    data.stocks.forEach(stock => {
+      const cagr = stock.cagr && stock.cagr.xirr !== null ? stock.cagr.xirr * 100 : null;
+      const cagrText = cagr !== null ? cagr.toFixed(2) + '%' : 'N/A';
+      const cagrClass = cagr !== null && cagr >= 0 ? 'profit' : 'loss';
+
+      html += `
+        <tr>
+          <td><strong>${stock.symbol}</strong></td>
+          <td class="text-right">${formatCurrency(stock.totalInvested || 0)}</td>
+          <td class="text-right">${formatCurrency(stock.currentValue || 0)}</td>
+          <td class="text-right ${cagrClass}">${cagrText}</td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+    stockContainer.innerHTML = html;
+  } else {
+    stockContainer.innerHTML = '<p>No stock reports available</p>';
+  }
+
+  // Category reports
+  const categoryContainer = document.getElementById('categoryReports');
+  if (data.categories && data.categories.length > 0) {
+    let html = `
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="text-right">Stocks</th>
+            <th class="text-right">Invested</th>
+            <th class="text-right">Current Value</th>
+            <th class="text-right">CAGR</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    data.categories.forEach(cat => {
+      const cagr = cat.cagr !== null ? cat.cagr * 100 : null;
+      const cagrText = cagr !== null ? cagr.toFixed(2) + '%' : 'N/A';
+      const cagrClass = cagr !== null && cagr >= 0 ? 'profit' : 'loss';
+
+      html += `
+        <tr>
+          <td><strong>${cat.categoryName}</strong></td>
+          <td class="text-right">${cat.stockCount || 0}</td>
+          <td class="text-right">${formatCurrency(cat.totalInvested || 0)}</td>
+          <td class="text-right">${formatCurrency(cat.totalValue || 0)}</td>
+          <td class="text-right ${cagrClass}">${cagrText}</td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+    categoryContainer.innerHTML = html;
+  } else {
+    categoryContainer.innerHTML = '<p>No category reports available</p>';
+  }
+}
+
+// ============================================================================
+// Transactions
+// ============================================================================
+function loadTransactions() {
+  google.script.run
+    .withSuccessHandler(renderTransactions)
+    .withFailureHandler(showError)
+    .getAllTransactions();
+}
+
+function renderTransactions(transactions) {
+  const container = document.getElementById('transactionsTable');
+
+  if (!transactions || transactions.length === 0) {
+    container.innerHTML = '<p>No transactions recorded yet.</p>';
+    return;
+  }
+
+  // Sort by date descending
+  transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  let html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Stock</th>
+          <th>Type</th>
+          <th class="text-right">Qty</th>
+          <th class="text-right">Price</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  transactions.slice(0, 50).forEach(txn => {
+    const typeClass = txn.type === 'BUY' ? 'profit' : 'loss';
+    const date = new Date(txn.date).toLocaleDateString('en-IN');
+
+    html += `
+      <tr>
+        <td>${date}</td>
+        <td>${txn.symbol}</td>
+        <td class="${typeClass}">${txn.type}</td>
+        <td class="text-right">${txn.quantity}</td>
+        <td class="text-right">${formatCurrency(txn.price)}</td>
+        <td class="text-right">${formatCurrency(txn.totalValue)}</td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ============================================================================
+// Dropdowns Population
+// ============================================================================
+function populateStockDropdowns() {
+  const buySelect = document.getElementById('buyStock');
+  const sellSelect = document.getElementById('sellStock');
+
+  // Clear existing options (keep first)
+  buySelect.innerHTML = '<option value="">Select Stock</option>';
+  sellSelect.innerHTML = '<option value="">Select Stock</option>';
+
+  stocks.forEach(stock => {
+    const option = document.createElement('option');
+    option.value = stock.id;
+    option.textContent = `${stock.symbol} - ${stock.name}`;
+    buySelect.appendChild(option.cloneNode(true));
+    sellSelect.appendChild(option);
+  });
+}
+
+function populateCategoryDropdowns() {
+  const select = document.getElementById('stockCategories');
+  select.innerHTML = '';
+
+  categories.forEach(cat => {
+    const option = document.createElement('option');
+    option.value = cat.id;
+    option.textContent = cat.name;
+    select.appendChild(option);
+  });
+}
+
+// ============================================================================
+// Form Handlers
+// ============================================================================
+function handleAddStock(event) {
+  event.preventDefault();
+
+  const form = event.target;
+  const formData = {
+    name: form.name.value,
+    symbol: form.symbol.value,
+    screenerUrl: form.screenerUrl.value,
+    sector: form.sector.value,
+    categoryIds: Array.from(form.categoryIds.selectedOptions).map(o => o.value).join(',')
+  };
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showToast('Stock added successfully!', 'success');
+        hideModal('addStockModal');
+        form.reset();
+        loadInitialData();
+      } else {
+        showToast(result.error, 'error');
+      }
+    })
+    .withFailureHandler(showError)
+    .handleAddStock(formData);
+}
+
+function handleBuy(event) {
+  event.preventDefault();
+
+  const form = event.target;
+  const formData = {
+    stockId: form.stockId.value,
+    date: form.date.value,
+    price: form.price.value,
+    quantity: form.quantity.value,
+    brokerage: form.brokerage.value,
+    stt: form.stt.value,
+    notes: form.notes.value
+  };
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showToast('Buy transaction recorded!', 'success');
+        hideModal('buyModal');
+        form.reset();
+        initializeDateInputs();
+        loadInitialData();
+      } else {
+        showToast(result.error, 'error');
+      }
+    })
+    .withFailureHandler(showError)
+    .handleBuyTransaction(formData);
+}
+
+function handleSell(event) {
+  event.preventDefault();
+
+  const form = event.target;
+  const formData = {
+    stockId: form.stockId.value,
+    date: form.date.value,
+    price: form.price.value,
+    quantity: form.quantity.value,
+    brokerage: form.brokerage.value,
+    stt: form.stt.value,
+    notes: form.notes.value
+  };
+
+  google.script.run
+    .withSuccessHandler(function(result) {
+      if (result.success) {
+        showToast('Sell transaction recorded!', 'success');
+        hideModal('sellModal');
+        form.reset();
+        initializeDateInputs();
+        loadInitialData();
+      } else {
+        showToast(result.error, 'error');
+      }
+    })
+    .withFailureHandler(showError)
+    .handleSellTransaction(formData);
+}
+
+// ============================================================================
+// Calculations
+// ============================================================================
+function setupCalculations() {
+  // Buy total
+  const buyQty = document.getElementById('buyQuantity');
+  const buyPrice = document.getElementById('buyPrice');
+
+  buyQty.addEventListener('input', updateBuyTotal);
+  buyPrice.addEventListener('input', updateBuyTotal);
+
+  // Sell total
+  const sellQty = document.getElementById('sellQuantity');
+  const sellPrice = document.getElementById('sellPrice');
+
+  sellQty.addEventListener('input', updateSellTotal);
+  sellPrice.addEventListener('input', updateSellTotal);
+}
+
+function updateBuyTotal() {
+  const qty = parseFloat(document.getElementById('buyQuantity').value) || 0;
+  const price = parseFloat(document.getElementById('buyPrice').value) || 0;
+  document.getElementById('buyTotal').value = formatCurrency(qty * price);
+}
+
+function updateSellTotal() {
+  const qty = parseFloat(document.getElementById('sellQuantity').value) || 0;
+  const price = parseFloat(document.getElementById('sellPrice').value) || 0;
+  document.getElementById('sellTotal').value = formatCurrency(qty * price);
+}
+
+function updateAvailableQty() {
+  const stockId = document.getElementById('sellStock').value;
+
+  if (!stockId) {
+    document.getElementById('availableQty').textContent = '-';
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(qty) {
+      document.getElementById('availableQty').textContent = qty;
+      document.getElementById('sellQuantity').max = qty;
+    })
+    .withFailureHandler(showError)
+    .getAvailableQuantityForStock(stockId);
+}
+
+// ============================================================================
+// Modal Management
+// ============================================================================
+function showModal(modalId) {
+  document.getElementById(modalId).classList.add('active');
+}
+
+function hideModal(modalId) {
+  document.getElementById(modalId).classList.remove('active');
+}
+
+// Close modal on outside click
+document.querySelectorAll('.modal').forEach(modal => {
+  modal.addEventListener('click', function(e) {
+    if (e.target === this) {
+      this.classList.remove('active');
+    }
+  });
+});
+
+// ============================================================================
+// Utilities
+// ============================================================================
+function formatCurrency(value) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(value);
+}
+
+function showToast(message, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = 'toast show ' + type;
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+  }, 3000);
+}
+
+function showError(error) {
+  console.error(error);
+  showToast(typeof error === 'string' ? error : 'An error occurred', 'error');
+}
+</script>

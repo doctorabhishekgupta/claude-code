@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 14px; padding: 16px; margin: 0; }
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; color: #333; font-size: 12px; }
+    input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+    input:focus, select:focus { outline: none; border-color: #ea4335; }
+    .form-row { display: flex; gap: 12px; }
+    .form-row .form-group { flex: 1; }
+    .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    .btn-danger { background: #ea4335; color: white; }
+    .btn-secondary { background: #f1f1f1; color: #333; }
+    .btn-danger:hover { background: #d33426; }
+    .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid #eee; }
+    .calculated { background: #f5f5f5; color: #666; }
+    .info-box { padding: 12px; background: #fff3e0; border-radius: 4px; margin-bottom: 16px; font-size: 13px; }
+    .info-box.holdings { background: #e3f2fd; }
+    .total-display { font-size: 18px; font-weight: bold; color: #ea4335; text-align: right; padding: 12px; background: #ffebee; border-radius: 4px; margin-bottom: 16px; }
+    .loading { text-align: center; padding: 20px; color: #666; }
+    .holdings-table { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 8px; }
+    .holdings-table th, .holdings-table td { padding: 6px 8px; border-bottom: 1px solid #e0e0e0; text-align: left; }
+    .holdings-table th { background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <form id="sellForm">
+    <div class="form-group">
+      <label for="stockId">Select Stock *</label>
+      <select id="stockId" name="stockId" required>
+        <option value="">-- Select Stock --</option>
+      </select>
+    </div>
+
+    <div class="info-box" id="availableInfo" style="display: none;">
+      <strong>Available to Sell:</strong> <span id="availableQty">-</span> shares
+      <div id="holdingsBreakdown" style="margin-top: 8px;"></div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="date">Transaction Date *</label>
+        <input type="date" id="date" name="date" required>
+      </div>
+      <div class="form-group">
+        <label for="quantity">Quantity *</label>
+        <input type="number" id="quantity" name="quantity" required min="1" step="1" placeholder="50">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="price">Sell Price per Share (₹) *</label>
+        <input type="number" id="price" name="price" required min="0.01" step="0.01" placeholder="1600.00">
+      </div>
+      <div class="form-group">
+        <label for="totalValue">Total Value (₹)</label>
+        <input type="text" id="totalValue" readonly class="calculated">
+      </div>
+    </div>
+
+    <div class="total-display" id="netTotal">
+      Net Proceeds: ₹0.00
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="brokerage">Brokerage (₹)</label>
+        <input type="number" id="brokerage" name="brokerage" value="0" min="0" step="0.01">
+      </div>
+      <div class="form-group">
+        <label for="stt">STT (₹)</label>
+        <input type="number" id="stt" name="stt" value="0" min="0" step="0.01">
+      </div>
+      <div class="form-group">
+        <label for="otherCharges">Other Charges (₹)</label>
+        <input type="number" id="otherCharges" name="otherCharges" value="0" min="0" step="0.01">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes" rows="2" placeholder="Optional transaction notes"></textarea>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" onclick="google.script.host.close()">Cancel</button>
+      <button type="submit" class="btn btn-danger">Record Sell</button>
+    </div>
+  </form>
+
+  <div id="loadingIndicator" class="loading" style="display: none;">
+    Recording transaction...
+  </div>
+
+  <script>
+    let maxQuantity = 0;
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+      // Set max date to today
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('date').value = today;
+      document.getElementById('date').max = today;
+
+      // Load stocks
+      google.script.run
+        .withSuccessHandler(populateStocks)
+        .getStocksForDropdown();
+    });
+
+    function populateStocks(stocks) {
+      const select = document.getElementById('stockId');
+      stocks.forEach(stock => {
+        const option = document.createElement('option');
+        option.value = stock.id;
+        option.textContent = stock.symbol + ' - ' + stock.name;
+        option.dataset.price = stock.currentPrice || 0;
+        select.appendChild(option);
+      });
+    }
+
+    // When stock selected, show available quantity
+    document.getElementById('stockId').addEventListener('change', function() {
+      const stockId = this.value;
+      if (!stockId) {
+        document.getElementById('availableInfo').style.display = 'none';
+        return;
+      }
+
+      // Get current price
+      const selected = this.options[this.selectedIndex];
+      const currentPrice = selected.dataset.price;
+      if (currentPrice && parseFloat(currentPrice) > 0) {
+        document.getElementById('price').value = parseFloat(currentPrice).toFixed(2);
+        calculateTotal();
+      }
+
+      // Get available quantity
+      google.script.run
+        .withSuccessHandler(function(qty) {
+          maxQuantity = qty;
+          document.getElementById('availableQty').textContent = qty;
+          document.getElementById('quantity').max = qty;
+          document.getElementById('availableInfo').style.display = 'block';
+        })
+        .getAvailableQuantityForStock(stockId);
+
+      // Get holdings breakdown
+      google.script.run
+        .withSuccessHandler(showHoldingsBreakdown)
+        .getHoldingsDetailsForStock(stockId);
+    });
+
+    function showHoldingsBreakdown(holdings) {
+      const container = document.getElementById('holdingsBreakdown');
+
+      if (!holdings || holdings.length === 0) {
+        container.innerHTML = '<em>No holdings found</em>';
+        return;
+      }
+
+      let html = '<table class="holdings-table"><thead><tr><th>Buy Date</th><th>Buy Price</th><th>Qty</th></tr></thead><tbody>';
+
+      holdings.forEach(h => {
+        html += `<tr><td>${h.buyDate}</td><td>₹${parseFloat(h.buyPrice).toLocaleString('en-IN')}</td><td>${h.remainingQuantity}</td></tr>`;
+      });
+
+      html += '</tbody></table>';
+      html += '<small style="color: #666;"><em>Sell will use FIFO (oldest first)</em></small>';
+
+      container.innerHTML = html;
+    }
+
+    // Validate quantity doesn't exceed available
+    document.getElementById('quantity').addEventListener('input', function() {
+      if (parseInt(this.value) > maxQuantity) {
+        this.value = maxQuantity;
+      }
+      calculateTotal();
+    });
+
+    // Calculate totals
+    ['price', 'brokerage', 'stt', 'otherCharges'].forEach(id => {
+      document.getElementById(id).addEventListener('input', calculateTotal);
+    });
+
+    function calculateTotal() {
+      const qty = parseFloat(document.getElementById('quantity').value) || 0;
+      const price = parseFloat(document.getElementById('price').value) || 0;
+      const brokerage = parseFloat(document.getElementById('brokerage').value) || 0;
+      const stt = parseFloat(document.getElementById('stt').value) || 0;
+      const other = parseFloat(document.getElementById('otherCharges').value) || 0;
+
+      const totalValue = qty * price;
+      const netTotal = totalValue - brokerage - stt - other;
+
+      document.getElementById('totalValue').value = '₹' + totalValue.toLocaleString('en-IN', {minimumFractionDigits: 2});
+      document.getElementById('netTotal').textContent = 'Net Proceeds: ₹' + netTotal.toLocaleString('en-IN', {minimumFractionDigits: 2});
+    }
+
+    // Form submission
+    document.getElementById('sellForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      const qty = parseInt(document.getElementById('quantity').value);
+      if (qty > maxQuantity) {
+        alert('Cannot sell more than ' + maxQuantity + ' shares');
+        return;
+      }
+
+      const formData = {
+        stockId: document.getElementById('stockId').value,
+        date: document.getElementById('date').value,
+        price: document.getElementById('price').value,
+        quantity: document.getElementById('quantity').value,
+        brokerage: document.getElementById('brokerage').value,
+        stt: document.getElementById('stt').value,
+        otherCharges: document.getElementById('otherCharges').value,
+        notes: document.getElementById('notes').value
+      };
+
+      document.getElementById('sellForm').style.display = 'none';
+      document.getElementById('loadingIndicator').style.display = 'block';
+
+      google.script.run
+        .withSuccessHandler(handleResult)
+        .withFailureHandler(handleError)
+        .handleSellTransaction(formData);
+    });
+
+    function handleResult(result) {
+      if (result.success) {
+        let msg = 'Sell transaction recorded!\n' +
+                  'Transaction ID: ' + result.transactionId + '\n' +
+                  'Quantity: ' + result.quantity + '\n' +
+                  'Net Proceeds: ₹' + result.netValue.toLocaleString('en-IN');
+
+        if (result.realizedPL) {
+          const pl = result.realizedPL.realizedPL;
+          const plPercent = (result.realizedPL.realizedPLPercent * 100).toFixed(2);
+          msg += '\n\nRealized P/L: ₹' + pl.toLocaleString('en-IN') + ' (' + plPercent + '%)';
+        }
+
+        alert(msg);
+        google.script.host.close();
+      } else {
+        handleError(result.error);
+      }
+    }
+
+    function handleError(error) {
+      document.getElementById('sellForm').style.display = 'block';
+      document.getElementById('loadingIndicator').style.display = 'none';
+      alert('Error: ' + error);
+    }
+  </script>
+</body>
+</html>
